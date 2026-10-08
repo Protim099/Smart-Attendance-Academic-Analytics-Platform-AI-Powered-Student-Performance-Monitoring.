@@ -10,34 +10,68 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('accounts', '0001_initial'),
-        ('auth', '0012_alter_user_first_name_max_length'),
-        ('courses', '0002_initial'),
+        ('attendance', '0001_initial'),
+        ('courses', '0001_initial'),
+        ('students', '0001_initial'),
+        ('teachers', '0001_initial'),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='user',
-            name='department',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='admins', to='courses.department'),
+            model_name='attendance',
+            name='student',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='attendance_records', to='students.student'),
         ),
         migrations.AddField(
-            model_name='user',
-            name='groups',
-            field=models.ManyToManyField(blank=True, help_text='The groups this user belongs to. A user will get all permissions granted to each of their groups.', related_name='user_set', related_query_name='user', to='auth.group', verbose_name='groups'),
+            model_name='attendancesession',
+            name='course',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='sessions', to='courses.course'),
         ),
         migrations.AddField(
-            model_name='user',
-            name='user_permissions',
-            field=models.ManyToManyField(blank=True, help_text='Specific permissions for this user.', related_name='user_set', related_query_name='user', to='auth.permission', verbose_name='user permissions'),
+            model_name='attendancesession',
+            name='created_by',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='sessions', to='teachers.teacher'),
         ),
         migrations.AddField(
-            model_name='auditlog',
-            name='user',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='audit_logs', to=settings.AUTH_USER_MODEL),
+            model_name='attendancesession',
+            name='schedule',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='sessions', to='courses.classschedule'),
+        ),
+        migrations.AddField(
+            model_name='attendance',
+            name='session',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='records', to='attendance.attendancesession'),
+        ),
+        migrations.AddField(
+            model_name='correctionrequest',
+            name='attendance',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='corrections', to='attendance.attendance'),
+        ),
+        migrations.AddField(
+            model_name='correctionrequest',
+            name='requested_by',
+            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='+', to=settings.AUTH_USER_MODEL),
+        ),
+        migrations.AddField(
+            model_name='correctionrequest',
+            name='reviewed_by',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='+', to=settings.AUTH_USER_MODEL),
         ),
         migrations.AddIndex(
-            model_name='auditlog',
-            index=models.Index(fields=['model_name', 'object_id'], name='accounts_au_model_n_76c60d_idx'),
+            model_name='attendancesession',
+            index=models.Index(fields=['course', 'date'], name='attendance__course__0312b0_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='attendancesession',
+            constraint=models.UniqueConstraint(fields=('course', 'date', 'schedule'), name='uniq_session'),
+        ),
+        migrations.AddIndex(
+            model_name='attendance',
+            index=models.Index(fields=['student', 'status'], name='attendance__student_cb2706_idx'),
+        ),
+        migrations.AddConstraint(
+            model_name='attendance',
+            constraint=models.UniqueConstraint(fields=('session', 'student'), name='uniq_attendance'),
         ),
     ]

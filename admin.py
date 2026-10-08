@@ -1,6 +1,7 @@
 from django.contrib import admin
 
-from .models import AcademicRecord, Assignment, Exam, Result, Submission
+from .models import Attendance, AttendanceSession, CorrectionRequest
 
-for m in (Assignment, Submission, Exam, Result, AcademicRecord):
-    admin.site.register(m)
+admin.site.register(AttendanceSession)
+admin.site.register(Attendance)
+admin.site.register(CorrectionRequest)

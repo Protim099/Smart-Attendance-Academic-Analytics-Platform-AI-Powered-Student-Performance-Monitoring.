@@ -1,101 +1,74 @@
+from django.conf import settings
 from django.db import models
 
 from apps.common.models import TimeStampedModel
-from apps.common.validators import validate_document
-
-GRADE_SCALE = [  # (min percentage, letter, grade point) — UGC Bangladesh 4.0 scale
-    (80, "A+", 4.00), (75, "A", 3.75), (70, "A-", 3.50), (65, "B+", 3.25), (60, "B", 3.00),
-    (55, "B-", 2.75), (50, "C+", 2.50), (45, "C", 2.25), (40, "D", 2.00), (0, "F", 0.00),
-]
 
 
-def grade_for(percentage):
-    for lo, letter, gp in GRADE_SCALE:
-        if percentage >= lo:
-            return letter, gp
-    return "F", 0.0
-
-
-class Assignment(TimeStampedModel):
-    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="assignments")
-    title = models.CharField(max_length=200)
-    description = models.TextField(blank=True)
-    due_date = models.DateTimeField()
-    max_marks = models.DecimalField(max_digits=6, decimal_places=2, default=10)
-    attachment = models.FileField(upload_to="assignments/", null=True, blank=True, validators=[validate_document])
+class AttendanceSession(TimeStampedModel):
+    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="sessions")
+    schedule = models.ForeignKey("courses.ClassSchedule", null=True, blank=True, on_delete=models.SET_NULL,
+                                 related_name="sessions")
+    date = models.DateField(db_index=True)
+    topic = models.CharField(max_length=200, blank=True)
     created_by = models.ForeignKey("teachers.Teacher", null=True, blank=True, on_delete=models.SET_NULL,
-                                   related_name="assignments")
+                                   related_name="sessions")
+    is_locked = models.BooleanField(default=False)
+    qr_token = models.CharField(max_length=64, null=True, blank=True, unique=True)
+    qr_created_at = models.DateTimeField(null=True, blank=True)
+    qr_expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["-due_date"]
-        indexes = [models.Index(fields=["course", "due_date"])]
-
-    def __str__(self):
-        return f"{self.course.code}: {self.title}"
-
-
-class Submission(TimeStampedModel):
-    assignment = models.ForeignKey(Assignment, on_delete=models.CASCADE, related_name="submissions")
-    student = models.ForeignKey("students.Student", on_delete=models.CASCADE, related_name="submissions")
-    text = models.TextField(blank=True)
-    file = models.FileField(upload_to="submissions/", null=True, blank=True, validators=[validate_document])
-    marks = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    feedback = models.TextField(blank=True)
-    submitted_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ["-submitted_at"]
-        constraints = [models.UniqueConstraint(fields=["assignment", "student"], name="uniq_submission")]
-
-
-class Exam(TimeStampedModel):
-    class Type(models.TextChoices):
-        QUIZ = "quiz", "Quiz"
-        MIDTERM = "midterm", "Midterm"
-        FINAL = "final", "Final"
-        LAB = "lab", "Lab"
-
-    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="exams")
-    title = models.CharField(max_length=150)
-    exam_type = models.CharField(max_length=10, choices=Type.choices, default=Type.QUIZ)
-    date = models.DateField()
-    total_marks = models.DecimalField(max_digits=6, decimal_places=2, default=100)
-
-    class Meta:
-        ordering = ["-date"]
+        ordering = ["-date", "-id"]
+        constraints = [models.UniqueConstraint(fields=["course", "date", "schedule"], name="uniq_session")]
         indexes = [models.Index(fields=["course", "date"])]
 
     def __str__(self):
-        return f"{self.course.code} {self.title}"
+        return f"{self.course.code} {self.date}"
 
 
-class Result(TimeStampedModel):
-    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name="results")
-    student = models.ForeignKey("students.Student", on_delete=models.CASCADE, related_name="results")
-    marks_obtained = models.DecimalField(max_digits=6, decimal_places=2)
-    grade = models.CharField(max_length=3, blank=True)
-    grade_point = models.DecimalField(max_digits=3, decimal_places=2, default=0)
+class Attendance(TimeStampedModel):
+    class Status(models.TextChoices):
+        PRESENT = "present", "Present"
+        ABSENT = "absent", "Absent"
+        LATE = "late", "Late"
+        EXCUSED = "excused", "Excused"
+
+    class Source(models.TextChoices):
+        MANUAL = "manual", "Manual"
+        QR = "qr", "QR code"
+
+    session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE, related_name="records")
+    student = models.ForeignKey("students.Student", on_delete=models.CASCADE, related_name="attendance_records")
+    status = models.CharField(max_length=10, choices=Status.choices, db_index=True)
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.MANUAL)
     remarks = models.CharField(max_length=200, blank=True)
+    marked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                  related_name="+")
 
     class Meta:
-        ordering = ["-exam__date", "student__student_id"]
-        constraints = [models.UniqueConstraint(fields=["exam", "student"], name="uniq_result")]
-        indexes = [models.Index(fields=["student", "exam"])]
+        ordering = ["-session__date", "student__student_id"]
+        constraints = [models.UniqueConstraint(fields=["session", "student"], name="uniq_attendance")]
+        indexes = [models.Index(fields=["student", "status"])]
 
-    def save(self, *args, **kwargs):
-        pct = float(self.marks_obtained) / float(self.exam.total_marks) * 100 if self.exam.total_marks else 0
-        self.grade, gp = grade_for(pct)
-        self.grade_point = gp
-        super().save(*args, **kwargs)
+    def __str__(self):
+        return f"{self.student.student_id} {self.session} {self.status}"
 
 
-class AcademicRecord(TimeStampedModel):
-    student = models.ForeignKey("students.Student", on_delete=models.CASCADE, related_name="academic_records")
-    semester = models.ForeignKey("courses.Semester", on_delete=models.CASCADE, related_name="academic_records")
-    gpa = models.DecimalField(max_digits=3, decimal_places=2, default=0)
-    cgpa = models.DecimalField(max_digits=3, decimal_places=2, default=0)
-    credits = models.DecimalField(max_digits=5, decimal_places=1, default=0)
+class CorrectionRequest(TimeStampedModel):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    attendance = models.ForeignKey(Attendance, on_delete=models.CASCADE, related_name="corrections")
+    requested_status = models.CharField(max_length=10, choices=Attendance.Status.choices)
+    reason = models.TextField()
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="+")
+    review_note = models.CharField(max_length=250, blank=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        ordering = ["student__student_id", "-semester__start_date"]
-        constraints = [models.UniqueConstraint(fields=["student", "semester"], name="uniq_academic_record")]
+        ordering = ["-created_at"]

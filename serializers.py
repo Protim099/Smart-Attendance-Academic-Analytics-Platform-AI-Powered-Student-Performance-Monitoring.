@@ -1,135 +1,104 @@
 from django.utils import timezone
 from rest_framework import serializers
 
-from apps.common.permissions import DEPT_ADMIN, STUDENT, TEACHER
+from apps.common.permissions import SUPER_ADMIN, TEACHER
 from apps.students.models import Enrollment
 
-from .models import AcademicRecord, Assignment, Exam, Result, Submission
+from .models import Attendance, AttendanceSession, CorrectionRequest
 
 
-def _check_course_access(user, course):
-    if user.role == TEACHER and (not course.teacher or course.teacher.user_id != user.id):
-        raise serializers.ValidationError({"course": "You can only manage your own courses."})
-    if user.role == DEPT_ADMIN and course.department_id != user.department_id:
-        raise serializers.ValidationError({"course": "Course is outside your department."})
-
-
-class AssignmentSerializer(serializers.ModelSerializer):
+class SessionSerializer(serializers.ModelSerializer):
     course_code = serializers.CharField(source="course.code", read_only=True)
     course_title = serializers.CharField(source="course.title", read_only=True)
-    submissions_count = serializers.IntegerField(read_only=True, default=0)
-    my_submission = serializers.SerializerMethodField()
+    teacher_name = serializers.CharField(source="created_by.user.get_full_name", read_only=True, default=None)
+    qr_active = serializers.SerializerMethodField()
+    present_count = serializers.IntegerField(read_only=True, default=0)
+    absent_count = serializers.IntegerField(read_only=True, default=0)
+    late_count = serializers.IntegerField(read_only=True, default=0)
+    excused_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
-        model = Assignment
-        fields = ["id", "course", "course_code", "course_title", "title", "description", "due_date", "max_marks",
-                  "attachment", "submissions_count", "my_submission", "created_at"]
+        model = AttendanceSession
+        fields = ["id", "course", "course_code", "course_title", "schedule", "date", "topic", "teacher_name",
+                  "is_locked", "qr_active", "qr_expires_at", "present_count", "absent_count", "late_count",
+                  "excused_count", "created_at"]
+        read_only_fields = ["qr_expires_at"]
+
+    def get_qr_active(self, obj):
+        return bool(obj.qr_token and obj.qr_expires_at and obj.qr_expires_at > timezone.now())
 
     def validate(self, attrs):
-        if "course" in attrs:
-            _check_course_access(self.context["request"].user, attrs["course"])
-        if attrs.get("max_marks") is not None and attrs["max_marks"] <= 0:
-            raise serializers.ValidationError({"max_marks": "Must be greater than zero."})
+        user = self.context["request"].user
+        course = attrs.get("course") or getattr(self.instance, "course", None)
+        if user.role == TEACHER and course and (not course.teacher or course.teacher.user_id != user.id):
+            raise serializers.ValidationError({"course": "You can only create sessions for your own courses."})
+        if user.role == "dept_admin" and course and course.department_id != user.department_id:
+            raise serializers.ValidationError({"course": "Course is outside your department."})
+        schedule = attrs.get("schedule")
+        if schedule and course and schedule.course_id != course.id:
+            raise serializers.ValidationError({"schedule": "Schedule does not belong to this course."})
+        date = attrs.get("date")
+        if date and date > timezone.localdate():
+            raise serializers.ValidationError({"date": "Attendance cannot be created for a future date."})
+        qs = AttendanceSession.objects.filter(course=course, date=date or getattr(self.instance, "date", None),
+                                              schedule=schedule)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if date and qs.exists():
+            raise serializers.ValidationError("A session already exists for this course and date.")
         return attrs
 
-    def get_my_submission(self, obj):
-        u = self.context["request"].user
-        if u.role != STUDENT:
-            return None
-        s = obj.submissions.filter(student__user=u).first()
-        return {"id": s.id, "marks": s.marks, "feedback": s.feedback, "submitted_at": s.submitted_at} if s else None
 
-
-class SubmissionSerializer(serializers.ModelSerializer):
+class AttendanceSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.user.get_full_name", read_only=True)
     student_roll = serializers.CharField(source="student.student_id", read_only=True)
-    assignment_title = serializers.CharField(source="assignment.title", read_only=True)
-    max_marks = serializers.DecimalField(source="assignment.max_marks", max_digits=6, decimal_places=2, read_only=True)
-    is_late = serializers.SerializerMethodField()
+    course = serializers.IntegerField(source="session.course_id", read_only=True)
+    course_code = serializers.CharField(source="session.course.code", read_only=True)
+    date = serializers.DateField(source="session.date", read_only=True)
+    marked_by_name = serializers.CharField(source="marked_by.username", read_only=True, default=None)
 
     class Meta:
-        model = Submission
-        fields = ["id", "assignment", "assignment_title", "student", "student_name", "student_roll", "text", "file",
-                  "marks", "max_marks", "feedback", "submitted_at", "is_late"]
-        read_only_fields = ["student", "submitted_at"]
+        model = Attendance
+        fields = ["id", "session", "course", "course_code", "date", "student", "student_name", "student_roll",
+                  "status", "source", "remarks", "marked_by_name", "updated_at"]
+        read_only_fields = ["session", "student", "source"]
 
-    def get_is_late(self, obj):
-        return obj.submitted_at > obj.assignment.due_date
+
+class BulkRecordSerializer(serializers.Serializer):
+    student = serializers.IntegerField()
+    status = serializers.ChoiceField(choices=Attendance.Status.choices)
+    remarks = serializers.CharField(required=False, allow_blank=True, max_length=200)
+
+
+class BulkMarkSerializer(serializers.Serializer):
+    records = BulkRecordSerializer(many=True, allow_empty=False)
+
+
+class CorrectionSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(source="attendance.student.user.get_full_name", read_only=True)
+    student_roll = serializers.CharField(source="attendance.student.student_id", read_only=True)
+    course_code = serializers.CharField(source="attendance.session.course.code", read_only=True)
+    date = serializers.DateField(source="attendance.session.date", read_only=True)
+    current_status = serializers.CharField(source="attendance.status", read_only=True)
+    reviewed_by_name = serializers.CharField(source="reviewed_by.username", read_only=True, default=None)
+
+    class Meta:
+        model = CorrectionRequest
+        fields = ["id", "attendance", "student_name", "student_roll", "course_code", "date", "current_status",
+                  "requested_status", "reason", "status", "reviewed_by_name", "review_note", "reviewed_at",
+                  "created_at"]
+        read_only_fields = ["status", "reviewed_at"]
 
     def validate(self, attrs):
-        u = self.context["request"].user
-        if u.role == STUDENT:
-            for f in ("marks", "feedback"):
-                attrs.pop(f, None)
-            a = attrs.get("assignment") or self.instance.assignment
-            if not Enrollment.objects.filter(student__user=u, course=a.course).exclude(status="dropped").exists():
-                raise serializers.ValidationError("You are not enrolled in this course.")
-            if not attrs.get("text") and not attrs.get("file") and not self.instance:
-                raise serializers.ValidationError("Provide text or attach a file.")
-        else:
-            a = self.instance.assignment if self.instance else attrs.get("assignment")
-            m = attrs.get("marks")
-            if m is not None and (m < 0 or m > a.max_marks):
-                raise serializers.ValidationError({"marks": f"Marks must be between 0 and {a.max_marks}."})
+        user = self.context["request"].user
+        att = attrs.get("attendance")
+        if att and user.role == "student":
+            if att.student.user_id != user.id:
+                raise serializers.ValidationError({"attendance": "You can only request corrections for your own records."})
+            if att.status == attrs.get("requested_status"):
+                raise serializers.ValidationError({"requested_status": "Requested status is the same as current."})
+            if CorrectionRequest.objects.filter(attendance=att, status="pending").exists():
+                raise serializers.ValidationError("A pending request already exists for this record.")
+        if len(attrs.get("reason", "")) < 10:
+            raise serializers.ValidationError({"reason": "Please explain the reason (min 10 characters)."})
         return attrs
-
-
-class ExamSerializer(serializers.ModelSerializer):
-    course_code = serializers.CharField(source="course.code", read_only=True)
-    course_title = serializers.CharField(source="course.title", read_only=True)
-    type_display = serializers.CharField(source="get_exam_type_display", read_only=True)
-    average_percentage = serializers.FloatField(read_only=True, default=None)
-
-    class Meta:
-        model = Exam
-        fields = ["id", "course", "course_code", "course_title", "title", "exam_type", "type_display", "date",
-                  "total_marks", "average_percentage"]
-
-    def validate(self, attrs):
-        if "course" in attrs:
-            _check_course_access(self.context["request"].user, attrs["course"])
-        if attrs.get("total_marks") is not None and attrs["total_marks"] <= 0:
-            raise serializers.ValidationError({"total_marks": "Must be greater than zero."})
-        return attrs
-
-
-class ResultSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(source="student.user.get_full_name", read_only=True)
-    student_roll = serializers.CharField(source="student.student_id", read_only=True)
-    exam_title = serializers.CharField(source="exam.title", read_only=True)
-    course_code = serializers.CharField(source="exam.course.code", read_only=True)
-    total_marks = serializers.DecimalField(source="exam.total_marks", max_digits=6, decimal_places=2, read_only=True)
-    percentage = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Result
-        fields = ["id", "exam", "exam_title", "course_code", "student", "student_name", "student_roll",
-                  "marks_obtained", "total_marks", "percentage", "grade", "grade_point", "remarks"]
-        read_only_fields = ["grade", "grade_point"]
-
-    def get_percentage(self, obj):
-        return round(float(obj.marks_obtained) / float(obj.exam.total_marks) * 100, 1)
-
-    def validate(self, attrs):
-        exam = attrs.get("exam") or getattr(self.instance, "exam", None)
-        student = attrs.get("student") or getattr(self.instance, "student", None)
-        _check_course_access(self.context["request"].user, exam.course)
-        m = attrs.get("marks_obtained")
-        if m is not None and (m < 0 or m > exam.total_marks):
-            raise serializers.ValidationError({"marks_obtained": f"Marks must be between 0 and {exam.total_marks}."})
-        if student and not Enrollment.objects.filter(student=student, course=exam.course).exists():
-            raise serializers.ValidationError({"student": "Student is not enrolled in this course."})
-        if not self.instance and Result.objects.filter(exam=exam, student=student).exists():
-            raise serializers.ValidationError("A result already exists for this student and exam.")
-        return attrs
-
-
-class AcademicRecordSerializer(serializers.ModelSerializer):
-    student_name = serializers.CharField(source="student.user.get_full_name", read_only=True)
-    student_roll = serializers.CharField(source="student.student_id", read_only=True)
-    semester_name = serializers.CharField(source="semester.name", read_only=True)
-
-    class Meta:
-        model = AcademicRecord
-        fields = ["id", "student", "student_name", "student_roll", "semester", "semester_name", "gpa", "cgpa",
-                  "credits"]

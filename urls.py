@@ -1,11 +1,10 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import AcademicRecordViewSet, AssignmentViewSet, ExamViewSet, ResultViewSet, SubmissionViewSet
+from .views import AttendanceViewSet, CorrectionViewSet, ScanView, SessionViewSet
 
 router = DefaultRouter()
-router.register("assignments", AssignmentViewSet, basename="assignment")
-router.register("submissions", SubmissionViewSet, basename="submission")
-router.register("exams", ExamViewSet, basename="exam")
-router.register("results", ResultViewSet, basename="result")
-router.register("academic-records", AcademicRecordViewSet, basename="academic-record")
-urlpatterns = router.urls
+router.register("sessions", SessionViewSet, basename="attendance-session")
+router.register("corrections", CorrectionViewSet, basename="attendance-correction")
+router.register("records", AttendanceViewSet, basename="attendance-record")
+urlpatterns = [path("scan/", ScanView.as_view(), name="attendance-scan")] + router.urls
