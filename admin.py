@@ -1,5 +1,5 @@
 from django.contrib import admin
 
-from .models import Notification
+from .models import Teacher
 
-admin.site.register(Notification)
+admin.site.register(Teacher)

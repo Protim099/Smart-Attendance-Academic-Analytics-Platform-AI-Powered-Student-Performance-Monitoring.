@@ -1,43 +1,34 @@
-from django.http import HttpResponse
-from rest_framework.exceptions import NotFound, ValidationError
-from rest_framework.response import Response
-from rest_framework.views import APIView
+from django.db.models import Count
+from rest_framework import viewsets
 
-from apps.accounts.audit import log_action
-from apps.common.permissions import STUDENT
+from apps.common.mixins import AuditMixin
+from apps.common.permissions import DEPT_ADMIN, SUPER_ADMIN, TEACHER, IsAdminOrReadOnly
 
-from .builders import REPORTS
-from .renderers import to_pdf, to_xlsx
+from .models import Teacher
+from .serializers import TeacherSerializer
 
 
-class ReportListView(APIView):
-    def get(self, request):
-        out = []
-        for slug, (_, label, params, student_ok) in REPORTS.items():
-            if request.user.role == STUDENT and not student_ok:
-                continue
-            out.append({"slug": slug, "label": label, "params": params})
-        return Response(out)
+class TeacherViewSet(AuditMixin, viewsets.ModelViewSet):
+    serializer_class = TeacherSerializer
+    permission_classes = [IsAdminOrReadOnly]
+    search_fields = ["employee_id", "user__first_name", "user__last_name", "user__email", "user__username"]
+    filterset_fields = ["department", "designation"]
+    ordering_fields = ["employee_id", "user__first_name"]
 
+    def get_queryset(self):
+        qs = Teacher.objects.select_related("user", "department").annotate(courses_count=Count("courses", distinct=True)).order_by("employee_id")
+        u = self.request.user
+        if u.role == DEPT_ADMIN:
+            qs = qs.filter(department=u.department)
+        elif u.role == TEACHER:
+            qs = qs.filter(department=getattr(getattr(u, "teacher_profile", None), "department", None))
+        elif u.role == "student":
+            qs = qs.filter(courses__enrollments__student__user=u).distinct()
+        return qs
 
-class ReportView(APIView):
-    """GET /api/reports/<slug>/?format=pdf|xlsx|json&<params>"""
-
-    def get(self, request, slug):
-        if slug not in REPORTS:
-            raise NotFound("Unknown report.")
-        fn, label, _, student_ok = REPORTS[slug]
-        if request.user.role == STUDENT and not student_ok:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Students can only export their own attendance and performance reports.")
-        report = fn(request.user, request.query_params)
-        fmt = request.query_params.get("export", "json")
-        if fmt == "json":
-            return Response(report)
-        if fmt not in ("pdf", "xlsx"):
-            raise ValidationError({"export": "Use pdf, xlsx or json."})
-        content, ctype, ext = to_pdf(report) if fmt == "pdf" else to_xlsx(report)
-        log_action(request, "EXPORT", model_name="Report", changes={"report": slug, "format": fmt})
-        resp = HttpResponse(content, content_type=ctype)
-        resp["Content-Disposition"] = f'attachment; filename="{slug}.{ext}"'
-        return resp
+    def perform_destroy(self, instance):
+        from apps.accounts.audit import log_action
+        log_action(self.request, "DELETE", instance)
+        user = instance.user
+        instance.delete()
+        user.delete()

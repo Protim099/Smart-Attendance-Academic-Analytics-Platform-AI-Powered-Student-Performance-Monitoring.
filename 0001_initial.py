@@ -10,26 +10,25 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
+        ('courses', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
         migrations.CreateModel(
-            name='Notification',
+            name='Teacher',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('created_at', models.DateTimeField(auto_now_add=True)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
-                ('title', models.CharField(max_length=150)),
-                ('message', models.TextField()),
-                ('level', models.CharField(choices=[('info', 'Info'), ('success', 'Success'), ('warning', 'Warning'), ('danger', 'Danger')], default='info', max_length=10)),
-                ('link', models.CharField(blank=True, max_length=200)),
-                ('is_read', models.BooleanField(default=False)),
-                ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='notifications', to=settings.AUTH_USER_MODEL)),
+                ('employee_id', models.CharField(max_length=20, unique=True)),
+                ('designation', models.CharField(default='Lecturer', max_length=80)),
+                ('office_room', models.CharField(blank=True, max_length=40)),
+                ('department', models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name='teachers', to='courses.department')),
+                ('user', models.OneToOneField(on_delete=django.db.models.deletion.CASCADE, related_name='teacher_profile', to=settings.AUTH_USER_MODEL)),
             ],
             options={
-                'ordering': ['-created_at', '-id'],
-                'indexes': [models.Index(fields=['user', 'is_read'], name='notificatio_user_id_427e4b_idx')],
+                'ordering': ['employee_id'],
             },
         ),
     ]

@@ -1,5 +1,7 @@
-from django.urls import path
+from rest_framework.routers import DefaultRouter
 
-from .views import ReportListView, ReportView
+from .views import TeacherViewSet
 
-urlpatterns = [path("", ReportListView.as_view()), path("<slug:slug>/", ReportView.as_view(), name="report")]
+router = DefaultRouter()
+router.register("teachers", TeacherViewSet, basename="teacher")
+urlpatterns = router.urls
