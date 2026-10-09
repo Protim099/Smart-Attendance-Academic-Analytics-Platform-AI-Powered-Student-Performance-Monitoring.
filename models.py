@@ -1,74 +1,105 @@
-from django.conf import settings
 from django.db import models
 
 from apps.common.models import TimeStampedModel
 
 
-class AttendanceSession(TimeStampedModel):
-    course = models.ForeignKey("courses.Course", on_delete=models.CASCADE, related_name="sessions")
-    schedule = models.ForeignKey("courses.ClassSchedule", null=True, blank=True, on_delete=models.SET_NULL,
-                                 related_name="sessions")
-    date = models.DateField(db_index=True)
-    topic = models.CharField(max_length=200, blank=True)
-    created_by = models.ForeignKey("teachers.Teacher", null=True, blank=True, on_delete=models.SET_NULL,
-                                   related_name="sessions")
-    is_locked = models.BooleanField(default=False)
-    qr_token = models.CharField(max_length=64, null=True, blank=True, unique=True)
-    qr_created_at = models.DateTimeField(null=True, blank=True)
-    qr_expires_at = models.DateTimeField(null=True, blank=True)
+class Department(TimeStampedModel):
+    name = models.CharField(max_length=150, unique=True)
+    code = models.CharField(max_length=10, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["-date", "-id"]
-        constraints = [models.UniqueConstraint(fields=["course", "date", "schedule"], name="uniq_session")]
-        indexes = [models.Index(fields=["course", "date"])]
+        ordering = ["name"]
 
     def __str__(self):
-        return f"{self.course.code} {self.date}"
+        return f"{self.code} - {self.name}"
 
 
-class Attendance(TimeStampedModel):
-    class Status(models.TextChoices):
-        PRESENT = "present", "Present"
-        ABSENT = "absent", "Absent"
-        LATE = "late", "Late"
-        EXCUSED = "excused", "Excused"
-
-    class Source(models.TextChoices):
-        MANUAL = "manual", "Manual"
-        QR = "qr", "QR code"
-
-    session = models.ForeignKey(AttendanceSession, on_delete=models.CASCADE, related_name="records")
-    student = models.ForeignKey("students.Student", on_delete=models.CASCADE, related_name="attendance_records")
-    status = models.CharField(max_length=10, choices=Status.choices, db_index=True)
-    source = models.CharField(max_length=10, choices=Source.choices, default=Source.MANUAL)
-    remarks = models.CharField(max_length=200, blank=True)
-    marked_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-                                  related_name="+")
+class Program(TimeStampedModel):
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="programs")
+    name = models.CharField(max_length=150)
+    code = models.CharField(max_length=15, unique=True)
+    duration_semesters = models.PositiveSmallIntegerField(default=8)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
-        ordering = ["-session__date", "student__student_id"]
-        constraints = [models.UniqueConstraint(fields=["session", "student"], name="uniq_attendance")]
-        indexes = [models.Index(fields=["student", "status"])]
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(fields=["department", "name"], name="uniq_program_per_dept")]
 
     def __str__(self):
-        return f"{self.student.student_id} {self.session} {self.status}"
+        return self.name
 
 
-class CorrectionRequest(TimeStampedModel):
-    class Status(models.TextChoices):
-        PENDING = "pending", "Pending"
-        APPROVED = "approved", "Approved"
-        REJECTED = "rejected", "Rejected"
+class Semester(TimeStampedModel):
+    class Term(models.TextChoices):
+        SPRING = "spring", "Spring"
+        SUMMER = "summer", "Summer"
+        FALL = "fall", "Fall"
 
-    attendance = models.ForeignKey(Attendance, on_delete=models.CASCADE, related_name="corrections")
-    requested_status = models.CharField(max_length=10, choices=Attendance.Status.choices)
-    reason = models.TextField()
-    status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING, db_index=True)
-    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
-    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
-                                    related_name="+")
-    review_note = models.CharField(max_length=250, blank=True)
-    reviewed_at = models.DateTimeField(null=True, blank=True)
+    name = models.CharField(max_length=50, unique=True)
+    year = models.PositiveSmallIntegerField()
+    term = models.CharField(max_length=10, choices=Term.choices)
+    start_date = models.DateField()
+    end_date = models.DateField()
+    is_current = models.BooleanField(default=False, db_index=True)
 
     class Meta:
-        ordering = ["-created_at"]
+        ordering = ["-start_date"]
+        constraints = [
+            models.CheckConstraint(check=models.Q(end_date__gt=models.F("start_date")), name="semester_dates_valid")
+        ]
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.is_current:
+            Semester.objects.exclude(pk=self.pk).filter(is_current=True).update(is_current=False)
+
+    def __str__(self):
+        return self.name
+
+
+class Course(TimeStampedModel):
+    code = models.CharField(max_length=15, unique=True)
+    title = models.CharField(max_length=200)
+    credit_hours = models.DecimalField(max_digits=3, decimal_places=1, default=3.0)
+    department = models.ForeignKey(Department, on_delete=models.PROTECT, related_name="courses")
+    program = models.ForeignKey(Program, null=True, blank=True, on_delete=models.SET_NULL, related_name="courses")
+    semester = models.ForeignKey(Semester, on_delete=models.PROTECT, related_name="courses")
+    teacher = models.ForeignKey("teachers.Teacher", null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name="courses")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["code"]
+        indexes = [models.Index(fields=["semester", "department"])]
+
+    def __str__(self):
+        return f"{self.code} - {self.title}"
+
+
+class ClassSchedule(TimeStampedModel):
+    class Day(models.IntegerChoices):
+        MONDAY = 0, "Monday"
+        TUESDAY = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY = 3, "Thursday"
+        FRIDAY = 4, "Friday"
+        SATURDAY = 5, "Saturday"
+        SUNDAY = 6, "Sunday"
+
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="schedules")
+    day_of_week = models.PositiveSmallIntegerField(choices=Day.choices)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    room = models.CharField(max_length=50, blank=True)
+
+    class Meta:
+        ordering = ["day_of_week", "start_time"]
+        constraints = [
+            models.CheckConstraint(check=models.Q(end_time__gt=models.F("start_time")), name="schedule_times_valid"),
+            models.UniqueConstraint(fields=["course", "day_of_week", "start_time"], name="uniq_course_slot"),
+        ]
+
+    def __str__(self):
+        return f"{self.course.code} {self.get_day_of_week_display()} {self.start_time:%H:%M}"

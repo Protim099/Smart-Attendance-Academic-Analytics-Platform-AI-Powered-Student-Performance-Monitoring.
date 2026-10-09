@@ -1,10 +1,11 @@
-from django.urls import path
 from rest_framework.routers import DefaultRouter
 
-from .views import AttendanceViewSet, CorrectionViewSet, ScanView, SessionViewSet
+from .views import ClassScheduleViewSet, CourseViewSet, DepartmentViewSet, ProgramViewSet, SemesterViewSet
 
 router = DefaultRouter()
-router.register("sessions", SessionViewSet, basename="attendance-session")
-router.register("corrections", CorrectionViewSet, basename="attendance-correction")
-router.register("records", AttendanceViewSet, basename="attendance-record")
-urlpatterns = [path("scan/", ScanView.as_view(), name="attendance-scan")] + router.urls
+router.register("departments", DepartmentViewSet, basename="department")
+router.register("programs", ProgramViewSet, basename="program")
+router.register("semesters", SemesterViewSet, basename="semester")
+router.register("courses", CourseViewSet, basename="course")
+router.register("schedules", ClassScheduleViewSet, basename="schedule")
+urlpatterns = router.urls

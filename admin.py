@@ -1,7 +1,6 @@
 from django.contrib import admin
 
-from .models import Attendance, AttendanceSession, CorrectionRequest
+from .models import ClassSchedule, Course, Department, Program, Semester
 
-admin.site.register(AttendanceSession)
-admin.site.register(Attendance)
-admin.site.register(CorrectionRequest)
+for m in (Department, Program, Semester, Course, ClassSchedule):
+    admin.site.register(m)
