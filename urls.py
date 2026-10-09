@@ -1,11 +1,7 @@
 from rest_framework.routers import DefaultRouter
 
-from .views import ClassScheduleViewSet, CourseViewSet, DepartmentViewSet, ProgramViewSet, SemesterViewSet
+from .views import NotificationViewSet
 
 router = DefaultRouter()
-router.register("departments", DepartmentViewSet, basename="department")
-router.register("programs", ProgramViewSet, basename="program")
-router.register("semesters", SemesterViewSet, basename="semester")
-router.register("courses", CourseViewSet, basename="course")
-router.register("schedules", ClassScheduleViewSet, basename="schedule")
+router.register("", NotificationViewSet, basename="notification")
 urlpatterns = router.urls
