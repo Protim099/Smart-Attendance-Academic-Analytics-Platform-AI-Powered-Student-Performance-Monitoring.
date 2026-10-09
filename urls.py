@@ -1,7 +1,5 @@
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 
-from .views import NotificationViewSet
+from .views import ReportListView, ReportView
 
-router = DefaultRouter()
-router.register("", NotificationViewSet, basename="notification")
-urlpatterns = router.urls
+urlpatterns = [path("", ReportListView.as_view()), path("<slug:slug>/", ReportView.as_view(), name="report")]
